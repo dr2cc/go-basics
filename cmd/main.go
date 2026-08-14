@@ -25,10 +25,10 @@ func main() {
 	// (это удобный аналог стандартного map[string]any)
 	productParams := b24.Params{
 		"fields": b24.Params{
-			"NAME": "Товар 3", // через Go SDK",
-			// "PRICE":       2450.00,
-			// "CURRENCY_ID": "RUB",
-			// "XML_ID":      "1C_CODE_77771", // Наш будущий мостик для 1С
+			"NAME":        "Товар 33", // через Go SDK",
+			"PRICE":       2450.00,
+			"CURRENCY_ID": "RUB",
+			"XML_ID":      "1C_CODE_77771", // Наш будущий мостик для 1С
 		},
 	}
 
