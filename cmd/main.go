@@ -1,58 +1,90 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
-	"math/big"
+	"time"
+
+	// Импортируем официальный SDK под псевдонимом b24 для удобства
+	b24 "github.com/bitrix24/b24gosdk"
 )
 
-func factorialRecursionCalk(currentArg, targetArg int, acc *big.Int, resultsChan chan *big.Int) *big.Int {
-	acc.Mul(acc, big.NewInt(int64(currentArg)))
-	if currentArg == targetArg {
-		resultsChan <- acc
-		// Прерываем рекурсию.
-		// Иначе на следующем шаге условие if currentArg == targetArg уже никогда не выполнится (так как аргумент стал больше),
-		// и рекурсия будет уходить в бесконечность, пока не закончится память (Stack Overflow), а главный поток main бесконечно ждёт ответа.
-		return acc
-	}
-	return factorialRecursionCalk(currentArg+1, targetArg, acc, resultsChan)
-}
-
 func main() {
-	argFactorial := 45
+	// 1. Создаем контекст выполнения с таймаутом
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 
-	// Вычисление argFactorial! используя горутины.
-	// Вычисляем факториал до середны диапазона:
-	middle := argFactorial / 2
+	// 2. Вставьте ваш URL входящего вебхука из Битрикс24
+	webhookURL := "https://b24-c74vn3.bitrix24.ru/rest/1/73x59n2yr79kfv4n/"
 
-	// Создаем канал для передачи больших чисел (*big.Int)
-	resultsChan := make(chan *big.Int)
+	// 3. Инициализируем клиент SDK
+	client := b24.NewClient(webhookURL)
 
-	// 1. Вычисление факториала от 1 до 22 в рекурсии.
-	// Можем начать вычисление с 2! т.к. третий параметр (аккумулятор) уже несет факториал 1 (1)
-	go factorialRecursionCalk(2, middle, big.NewInt(1), resultsChan)
-
-	// 2. Вычисление промежуточное произведением диапазона от 23 до 45 в цикле.
-	// В англоязычной литературе это называется partial product или range product.
-	// Сам по себе факториал всегда начинается с единицы.
-	// Но из-за свойства ассоциативности умножения мы можем считать кусками: 45!=res1*res2
-	go factorialCalk(middle, argFactorial, resultsChan)
-
-	// Главный поток (main) ждет и забирает оба значения из канала
-	// Первая прочитанная переменная получит то число, которое посчиталось БЫСТРЕЕ
-	res1 := <-resultsChan
-	res2 := <-resultsChan
-
-	// 5. Перемножаем две половины между собой для получения финального 45!
-	finalResult := new(big.Int).Mul(res1, res2)
-
-	fmt.Printf("Factorial %d is equal to:\n%s\n", argFactorial, finalResult.String())
-
-}
-
-func factorialCalk(border int, argFactorial int, resultsChan chan *big.Int) {
-	acc := big.NewInt(1)                          // Начинаем с 1, чтобы первым значением было 23
-	for i := border + 1; i <= argFactorial; i++ { // от 23 до 45
-		acc.Mul(acc, big.NewInt(int64(i))) // Умножаем строго на i (23, 24... 45)
+	// 4. Формируем параметры товара. В SDK используется тип b24.Params
+	// (это удобный аналог стандартного map[string]any)
+	productParams := b24.Params{
+		"fields": b24.Params{
+			"NAME": "Товар 3", // через Go SDK",
+			// "PRICE":       2450.00,
+			// "CURRENCY_ID": "RUB",
+			// "XML_ID":      "1C_CODE_77771", // Наш будущий мостик для 1С
+		},
 	}
-	resultsChan <- acc
+
+	fmt.Println("⏳ Отправка запроса через b24gosdk...")
+
+	// 5. Вызываем метод. Сервис Core() выполняет любой стандартный метод REST API.
+	// Метод crm.product.add является безопасным для повтора, если сеть моргнет,
+	// но SDK рекомендует явно указывать WithIdempotent() для чтения или точечной записи.
+	res, err := client.Core().Call(ctx, "crm.product.add", productParams)
+	if err != nil {
+		fmt.Printf("❌ Ошибка выполнения метода: %v\n", err)
+		return
+	}
+
+	// 6. SDK возвращает сырой результат в res.Result.
+	// Метод crm.product.add возвращает просто число (ID нового товара).
+	// Декодируем его в специальный тип b24.ID, который защищает от путаницы строк и чисел в API.
+	var productID b24.ID
+	if err := json.Unmarshal(res.Result, &productID); err != nil {
+		fmt.Printf("❌ Ошибка декодирования ID товара: %v\n", err)
+		return
+	}
+
+	// Победа!
+	fmt.Println("✅ Успех!")
+	fmt.Printf("📦 Товар успешно создан в облаке Битрикс24. ID товара: %v\n", productID)
+
+	// // Полный путь к методу создания товара в CRM
+	// apiURL := webhookURL + "catalog.product.add.json"
+
+	// res, err := client.Core().Call(ctx, "catalog.product.add", b24.Params{
+	// 	"fields": b24.Params{
+	// 		"iblockId": 23,
+	// 		"name":     "Товар",
+	// 	},
+	// })
+	// if err != nil {
+	// 	return fmt.Errorf("catalog.product.add: %w", err)
+	// }
+
+	// // Метод заворачивает ответ в объект с ключом "element".
+	// raw, ok := b24.Unwrap(res.Result, "element")
+	// if !ok {
+	// 	return fmt.Errorf("в ответе нет ключа element")
+	// }
+
+	// var item struct {
+	// 	Active     string `json:"active"`
+	// 	Available  string `json:"available"`
+	// 	Bundle     string `json:"bundle"`
+	// 	CanBuyZero string `json:"canBuyZero"`
+	// 	Code       string `json:"code"`
+	// 	CreatedBy  int    `json:"createdBy"`
+	// }
+	// if err := json.Unmarshal(raw, &item); err != nil {
+	// 	return fmt.Errorf("разбор ответа: %w", err)
+	// }
+	// fmt.Println(item.Active, item.Available)
 }
